@@ -10,13 +10,40 @@ import sys
 API_BASE = 'https://www.transparentclassroom.com'
 
 
-# Number of posts per page from `page.json`
+# Max number of posts per page to expect from `posts.json`
 #
-# The `posts.json` endpoint seems to accept a `per_page` argument, but passing a
-# value causes the endpoint to 500. The default value is 30, which is also
-# hardcoded in the mobile app: the app assumes it's done listing if it gets
-# fewer than 30 posts in the response.
+# This value is also hardcoded in the mobile app: when it seems fewer than 30
+# posts on a page, it stops listing.
+#
+# The endpoint seems to accept a `per_page` argument, but setting it to *any*
+# value -- even the evident "default" of 30 -- causes it to return a 500.
 POSTS_PER_PAGE = 30
+
+
+# Response from `authenticate.json`
+class UserInfo(TypedDict):
+    id: int
+
+    school_id: int
+
+    first_name: str
+    last_name: str
+    email: str
+
+    api_token: str
+
+
+# One subject from `my_subjects.json`
+class Subject(TypedDict):
+    id: int
+
+    school_id: int
+    classroom_id: int
+
+    name: str
+    school_name: str
+
+    type: str  # e.g. "Child"
 
 
 # One post from `posts.json`
@@ -104,40 +131,52 @@ def get_child_posts(s: requests.Session, school_id: int, child_id: int) -> List[
     return list1
 
 
-def main(username: str, password: str):
+def authenticate(username: str, password: str) -> UserInfo:
     s = requests.Session()
     s.auth = (username, password)
+
     r = s.get(f'{API_BASE}/api/v1/authenticate.json')
     assert r.status_code == 200, f'authentication failed, status {r.status_code}'
 
-    user_info = r.json()
+    return r.json()
+
+
+def get_subjects(s: requests.Session, school_id: int) -> List[Subject]:
+    r = s.get(f'{API_BASE}/s/{school_id}/users/my_subjects.json')
+    assert r.status_code == 200, f'get subjects failed, status {r.status_code}'
+
+    return r.json()
+
+
+def main(username: str, password: str):
+    user_info = authenticate(username, password)
+
     print(
         f'Logged in as "{user_info["first_name"]} {user_info["last_name"]}" ({user_info["email"]})\n'
         f'  User ID:   {user_info["id"]}\n'
         f'  School ID: {user_info["school_id"]}'
     )
-
     print()
 
-    api_token = r.json()['api_token']
-    school_id = int(r.json()['school_id'])
+    api_token = user_info['api_token']
+    school_id = int(user_info['school_id'])
 
     s = requests.Session()
     s.headers.update({'X-TransparentClassroomToken': api_token})
 
-    r = s.get(f'{API_BASE}/s/{school_id}/users/my_subjects.json')
-    assert r.status_code == 200, f'get subjects failed, status {r.status_code}'
+    subjects = get_subjects(s, school_id)
 
-    print(f'Found {len(r.json())} children')
-    for subj in r.json():
-        assert subj['type'] == 'Child', f'unexpected subject type {subj["type"]}'
+    print(f'Found {len(subjects)} children')
+    for subj in subjects:
+        assert subj['type'] == 'Child', f'unexpected subject type: {subj["type"]}'
         print(
             f'- {subj["name"]}\n'
             f'    Child ID:     {subj["id"]}\n'
             f'    Classroom ID: {subj["classroom_id"]}'
         )
-
     print()
+
+    return
 
     children_ids = [x['id'] for x in r.json()]
 
