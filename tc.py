@@ -6,18 +6,37 @@ from typing import List, TypedDict
 import requests
 import sys
 
+
 API_BASE = 'https://www.transparentclassroom.com'
 
-# The `posts.json` endpoint seems to accept a `per_page` argument, but passing
-# a value causes the endpoint to 500. The default value is 30, which is also
-# hardcoded into the mobile app as "fewer than 30 results means done listing".
+
+# Number of posts per page from `page.json`
+#
+# The `posts.json` endpoint seems to accept a `per_page` argument, but passing a
+# value causes the endpoint to 500. The default value is 30, which is also
+# hardcoded in the mobile app: the app assumes it's done listing if it gets
+# fewer than 30 posts in the response.
 POSTS_PER_PAGE = 30
 
+
+# One post from `posts.json`
 class Post(TypedDict):
     id: int
-    classroom_id: int
     created_at: str  # e.g. "2022-04-01T11:22:37.000-07:00"
+
+    classroom_id: int
+
+    author: str
+    date: str  # e.g. "2022-04-01"
+
     html: str
+    normalized_text: str
+
+    photo_url: str
+    medium_photo_url: str
+    large_photo_url: str
+    original_photo_url: str
+
 
 # TODO: sentinel ID or `created_at` for "stop looking"`
 def get_child_posts_once(s: requests.Session, school_id: int, child_id: int) -> List[Post]:
@@ -40,6 +59,7 @@ def get_child_posts_once(s: requests.Session, school_id: int, child_id: int) -> 
         page = page + 1
 
     return posts
+
 
 def get_child_posts(s: requests.Session, school_id: int, child_id: int) -> List[Post]:
     # Retrieve posts twice and check the lists match.
@@ -82,6 +102,7 @@ def get_child_posts(s: requests.Session, school_id: int, child_id: int) -> List[
     assert list1 == list2, 'posts changed while listing'
 
     return list1
+
 
 def main(username: str, password: str):
     s = requests.Session()
@@ -127,6 +148,7 @@ def main(username: str, password: str):
     # r = s.get(f'{API_BASE}/s/87/children/99918/posts.json?per_page=50')
     # assert r.status_code == 200, f'failed getting posts, status {r.status_code}\n{r.text}'
 
+
 if __name__ == '__main__':
     username = 'mdriley@gmail.com'
     password = os.getenv('TC_PASSWORD')
@@ -134,6 +156,7 @@ if __name__ == '__main__':
     assert password, 'password not found in TC_PASSWORD'
 
     main(username, password)
+
 
 # r = s.get(f'{API_BASE}/s/87/children/99918/posts.json?ids=50562295')
 # assert r.status_code == 200, f'failed getting posts, status {r.status_code}\n{r.text}'
