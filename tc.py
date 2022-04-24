@@ -70,6 +70,7 @@ class Post(TypedDict):
     html: str
     normalized_text: str
 
+    # these are missing for text-only posts
     photo_url: str
     medium_photo_url: str
     large_photo_url: str
@@ -178,7 +179,7 @@ def url_extension(url: str) -> str:
     parsed = urllib.parse.urlparse(url)
     _, dot, ext = parsed.path.rpartition('.')
     assert dot == '.', f'get extension from url failed: {url}'
-    assert ext in ['jpg', 'jpeg', 'png'], f'unexpected image format: {ext}'
+    assert ext in ['jpg', 'jpeg', 'png'], f'unexpected image extension: {ext}'
 
     return ext
 
@@ -202,6 +203,7 @@ async def download_photos(posts: List[Post], target_path: pathlib.Path):
                 print(final_path)
 
         for p in posts:
+            # skip text-only posts
             if 'photo_url' not in p:
                 continue
 
