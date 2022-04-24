@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 
+import aiohttp
+import argparse
+import asyncio
 import json
 import os
-from typing import List, TypedDict
+import pathlib
+from typing import Dict, List, TypedDict
+import urllib.parse
 import requests
 import sys
+
+
+# TODO: announcements have photos too
 
 
 API_BASE = 'https://www.transparentclassroom.com'
@@ -18,6 +26,9 @@ API_BASE = 'https://www.transparentclassroom.com'
 # The endpoint seems to accept a `per_page` argument, but setting it to *any*
 # value -- even the evident "default" of 30 -- causes it to return a 500.
 POSTS_PER_PAGE = 30
+
+
+MAX_CONCURRENT_DOWNLOADS = 50
 
 
 # Response from `authenticate.json`
@@ -91,38 +102,10 @@ def get_child_posts_once(s: requests.Session, school_id: int, child_id: int) -> 
 def get_child_posts(s: requests.Session, school_id: int, child_id: int) -> List[Post]:
     # Retrieve posts twice and check the lists match.
     #
-    # The only API we have for getting posts is to list by page. While we're
-    # retrieving pages there's a vanishingly small, but nonzero, chance that a
-    # post will be added or deleted.
-    # 
-    # We want to make sure in all circumstances we return *at least* all posts
-    # that existed when we started enumerating and still existed when we're
-    # done. That way, later updates can assume they have all posts older than
-    # the newest post we return.
-    #
-    # An added post wouldn't be too hard to work around. The new post would move
-    # a post that had been on page N to page N+1, so at worst we would see a
-    # post twice on two different pages and we'd need to deduplicate. We might
-    # not get the new post in our listing but that's no worse than if we'd done
-    # the listing right before the post was added.
-    #
-    # Deleted posts are more worrying. If a post on page N is deleted, a post
-    # from page N+1 will shift to page N, and likewise for all later pairs of
-    # adjacent pages. If we're in the midst of retrieving any page after N we
-    # will silently *miss* a post.
-    #
-    # We can imagine some complex schemes to fix this. For example, if we
-    # happened to know the index of the last page of results, we could detect
-    # that a delete happened: retrieve the last page first, then get pages in
-    # order, then finally check if the number of posts on the last page has gone
-    # down. If so, a delete happened, though we don't know where. If the page is
-    # the same size, it's *still possible* that a delete happened if there was
-    # also an add, but we can check if an add occurred by *also* re-retrieving
-    # the first page and seeing if the ID of the first post has changed. (This
-    # assumes new posts will sort first, which seems correct.)
-    #
-    # Instead, we choose an approach that is inefficient but straightforwardly
-    # correct: do the full listing twice and fail if it changes.
+    # todo: rewrite this long comment. Turns out, empirically, posts are sorted
+    # by `date` (which can be backdated!), and then seemingly by `created_at` to
+    # break ties. We still observe inversions in `id` even within equal values
+    # for `date`, so it doesn't seem to be involved in sorting.
 
     list1 = get_child_posts_once(s, school_id, child_id)
     list2 = get_child_posts_once(s, school_id, child_id)
@@ -148,7 +131,7 @@ def get_subjects(s: requests.Session, school_id: int) -> List[Subject]:
     return r.json()
 
 
-def main(username: str, password: str):
+def download_posts(username: str, password: str, target_path: pathlib.Path):
     user_info = authenticate(username, password)
 
     print(
@@ -176,25 +159,84 @@ def main(username: str, password: str):
         )
     print()
 
-    return
-
-    children_ids = [x['id'] for x in r.json()]
+    children_ids = [s['id'] for s in subjects]
 
     for child_id in children_ids:
+        child_path = target_path.joinpath(f'children/{child_id}')
+        child_path.mkdir(parents=True, exist_ok=True)
+
+        # TODO: incremental update
         ps = get_child_posts(s, school_id, child_id)
         print(f'child {child_id}: {len(ps)} posts')
+        print()
 
-    # r = s.get(f'{API_BASE}/s/87/children/99918/posts.json?per_page=50')
-    # assert r.status_code == 200, f'failed getting posts, status {r.status_code}\n{r.text}'
+        with child_path.joinpath(f'posts.json').open('w') as f:
+            json.dump(ps, f, indent=2)
+
+
+def url_extension(url: str) -> str:
+    parsed = urllib.parse.urlparse(url)
+    _, dot, ext = parsed.path.rpartition('.')
+    assert dot == '.', f'get extension from url failed: {url}'
+    assert ext in ['jpg', 'jpeg', 'png'], f'unexpected image format: {ext}'
+
+    return ext
+
+
+async def download_photos(posts: List[Post], target_path: pathlib.Path):
+    target_path.mkdir(exist_ok=True)
+    limiter = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+    tasks = []
+
+    async with aiohttp.ClientSession() as session:
+        async def download_one(url: str, stem_path: pathlib.Path):
+            final_path = stem_path.with_suffix('.' + url_extension(url))
+            if final_path.exists():
+                return
+
+            temp_path = stem_path.with_suffix('.unfinished')
+            async with limiter, session.get(url) as response:
+                with temp_path.open('wb') as f:
+                    f.write(await response.read())
+                temp_path.rename(final_path)
+                print(final_path)
+
+        for p in posts:
+            if 'photo_url' not in p:
+                continue
+
+            id = p['id']
+            tasks += map(asyncio.create_task, [
+                download_one(p['photo_url'], target_path.joinpath(f'{id}')),
+                download_one(p['original_photo_url'], target_path.joinpath(f'{id}_original')),
+            ])
+    
+        await asyncio.gather(*tasks)
+
+
+async def main(args):
+    base_path = pathlib.Path('./TransparentClassroomArchive')
+
+    if args.no_update_posts:
+        print('Not retrieving posts')
+    else:
+        username = 'mdriley@gmail.com'
+        password = os.getenv('TC_PASSWORD')
+
+        assert password, 'password not found in TC_PASSWORD'
+
+        download_posts(username, password, base_path)
+
+    for posts_json in base_path.glob('children/*/posts.json'):
+        with posts_json.open('r') as f:
+            posts = json.load(f)
+            await download_photos(posts, base_path.joinpath('photos'))
 
 
 if __name__ == '__main__':
-    username = 'mdriley@gmail.com'
-    password = os.getenv('TC_PASSWORD')
-
-    assert password, 'password not found in TC_PASSWORD'
-
-    main(username, password)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--no-update-posts', action='store_true')
+    asyncio.run(main(parser.parse_args()))
 
 
 # r = s.get(f'{API_BASE}/s/87/children/99918/posts.json?ids=50562295')
