@@ -211,7 +211,7 @@ async def download_photos(posts: List[Post], target_path: pathlib.Path):
 
             temp_path = stem_path.with_suffix('.unfinished')
             async with limiter, session.get(url) as response:
-                # TODO: double-check error behavior. raise on non-200?
+                response.raise_for_status()
                 with temp_path.open('wb') as f:
                     f.write(await response.read())
 
