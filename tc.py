@@ -84,7 +84,7 @@ def get_child_posts_once(s: requests.Session, school_id: int, child_id: int) -> 
     while True:
         print(f'requesting child {child_id} page {page}')
         r = s.get(f'{API_BASE}/s/{school_id}/children/{child_id}/posts.json?page={page}')
-        assert r.status_code == 200, f'get posts failed, status {r.status_code}'
+        r.raise_for_status()
 
         j = r.json()
         assert len(j) <= POSTS_PER_PAGE, f'response has {len(j)} posts, expected <= {POSTS_PER_PAGE}'
@@ -120,14 +120,14 @@ def authenticate(username: str, password: str) -> UserInfo:
     s.auth = (username, password)
 
     r = s.get(f'{API_BASE}/api/v1/authenticate.json')
-    assert r.status_code == 200, f'authentication failed, status {r.status_code}'
+    r.raise_for_status()
 
     return r.json()
 
 
 def get_subjects(s: requests.Session, school_id: int) -> List[Subject]:
     r = s.get(f'{API_BASE}/s/{school_id}/users/my_subjects.json')
-    assert r.status_code == 200, f'get subjects failed, status {r.status_code}'
+    r.raise_for_status()
 
     return r.json()
 
@@ -211,6 +211,7 @@ async def download_photos(posts: List[Post], target_path: pathlib.Path):
 
             temp_path = stem_path.with_suffix('.unfinished')
             async with limiter, session.get(url) as response:
+                # TODO: double-check error behavior. raise on non-200?
                 with temp_path.open('wb') as f:
                     f.write(await response.read())
 
@@ -239,7 +240,7 @@ async def main(args):
     if args.no_update_posts:
         print('Not retrieving posts')
     else:
-        username = 'mdriley@gmail.com'
+        username = os.getenv('TC_USERNAME')
         password = os.getenv('TC_PASSWORD')
 
         assert password, 'password not found in TC_PASSWORD'
@@ -261,7 +262,7 @@ if __name__ == '__main__':
 # the appendices
 
 # r = s.get(f'{API_ROOT}/v1/activity.json?child_id={child}')
-# assert r.status_code == 200, f'getting activity failed, status {r.status_code}'
+# r.raise_for_status()
 # print(json.dumps(r.json(), indent=2))
 
 # works, gets my info
@@ -279,8 +280,8 @@ if __name__ == '__main__':
 # /s/87/frontend/announcements.json?page=2022-03-31T08:23:34.075-07:00
 
 # r = s.get(f'{API_BASE}/s/87/children/99918/posts.json')
-# assert r.status_code == 200, f'failed getting posts, status {r.status_code}\n{r.text}'
+# r.raise_for_status()
 
 # r = s.get(f'{API_BASE}/s/87/children/99918/posts.json?ids[]=50562295&ids[]=25491909')
-# assert r.status_code == 200, f'failed getting posts, status {r.status_code}\n{r.text}'
+# r.raise_for_status()
 # print(json.dumps(r.json(), indent=2))
