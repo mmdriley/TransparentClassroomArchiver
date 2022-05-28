@@ -28,7 +28,7 @@ API_BASE = 'https://www.transparentclassroom.com'
 POSTS_PER_PAGE = 30
 
 
-MAX_CONCURRENT_DOWNLOADS = 50
+MAX_CONCURRENT_DOWNLOADS = 10
 
 
 # Response from `authenticate.json`
@@ -196,6 +196,8 @@ def url_extension(url: str) -> str:
 #  - any reason to care about mime type?
 #  - move Post parsing out of this, just take a Dict of url -> filename
 #    (still some debate on where the add-extension code should go)
+# - may want a mode that double-checks photos already downloaded
+#   (with what? etag?)
 async def download_photos(posts: List[Post], target_path: pathlib.Path):
     target_path.mkdir(exist_ok=True)
     limiter = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
@@ -211,6 +213,9 @@ async def download_photos(posts: List[Post], target_path: pathlib.Path):
             async with limiter, session.get(url) as response:
                 with temp_path.open('wb') as f:
                     f.write(await response.read())
+
+                # invariant: file only exists with final name if successfully
+                # and completely downloaded
                 temp_path.rename(final_path)
                 print(final_path)
 
