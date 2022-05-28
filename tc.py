@@ -132,6 +132,10 @@ def get_subjects(s: requests.Session, school_id: int) -> List[Subject]:
     return r.json()
 
 
+# TODO:
+#   - this could be a much better "archiver", right now it will *throw away* details on posts
+#     that have been deleted by the school. Need to union?
+#   - ideally might write updates to new files, in case old files are backed up
 def download_posts(username: str, password: str, target_path: pathlib.Path):
     user_info = authenticate(username, password)
 
@@ -145,6 +149,8 @@ def download_posts(username: str, password: str, target_path: pathlib.Path):
     api_token = user_info['api_token']
     school_id = int(user_info['school_id'])
 
+    # Create a session with the right authentication header for all future requests.
+    # As an added bonus, using a session gets us connection keep-alive.
     s = requests.Session()
     s.headers.update({'X-TransparentClassroomToken': api_token})
 
@@ -184,6 +190,12 @@ def url_extension(url: str) -> str:
     return ext
 
 
+# TODO:
+#  - set filetime with `Last-Modified` header
+#    (or at least store it somewhere? I probably don't actually want to care about preserving filesystem metadata)
+#  - any reason to care about mime type?
+#  - move Post parsing out of this, just take a Dict of url -> filename
+#    (still some debate on where the add-extension code should go)
 async def download_photos(posts: List[Post], target_path: pathlib.Path):
     target_path.mkdir(exist_ok=True)
     limiter = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
