@@ -205,6 +205,8 @@ async def download_photos(posts: List[Post], target_path: pathlib.Path):
 
     async with aiohttp.ClientSession() as session:
         async def download_one(url: str, stem_path: pathlib.Path):
+            # Invariant: file exists at final path only if it was downloaded
+            # successfully and completely.
             final_path = stem_path.with_suffix('.' + url_extension(url))
             if final_path.exists():
                 return
@@ -215,8 +217,6 @@ async def download_photos(posts: List[Post], target_path: pathlib.Path):
                 with temp_path.open('wb') as f:
                     f.write(await response.read())
 
-                # invariant: file only exists with final name if successfully
-                # and completely downloaded
                 temp_path.rename(final_path)
                 print(final_path)
 
