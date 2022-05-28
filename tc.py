@@ -258,19 +258,10 @@ if __name__ == '__main__':
     asyncio.run(main(parser.parse_args()))
 
 
-# r = s.get(f'{API_BASE}/s/87/children/99918/posts.json?ids=50562295')
-# assert r.status_code == 200, f'failed getting posts, status {r.status_code}\n{r.text}'
-
-# j = r.json()
-# print(len(j))
-# print(json.dumps(j[0], indent=2))
-
-
 # the appendices
 
 # r = s.get(f'{API_ROOT}/v1/activity.json?child_id={child}')
 # assert r.status_code == 200, f'getting activity failed, status {r.status_code}'
-
 # print(json.dumps(r.json(), indent=2))
 
 # works, gets my info
@@ -290,7 +281,6 @@ if __name__ == '__main__':
 # r = s.get(f'{API_BASE}/s/87/children/99918/posts.json')
 # assert r.status_code == 200, f'failed getting posts, status {r.status_code}\n{r.text}'
 
-# get specific id. seems like it's supposed to support multiple IDs
-#  but I can't figure out how to provide a list
-# r = s.get(f'{API_BASE}/s/87/children/99918/posts.json?ids=50562295')
-
+# r = s.get(f'{API_BASE}/s/87/children/99918/posts.json?ids[]=50562295&ids[]=25491909')
+# assert r.status_code == 200, f'failed getting posts, status {r.status_code}\n{r.text}'
+# print(json.dumps(r.json(), indent=2))
