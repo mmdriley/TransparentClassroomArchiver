@@ -12,10 +12,10 @@ import requests
 import sys
 
 
+import TransparentClassroom as TC
+
+
 # TODO: announcements have photos too
-
-
-API_BASE = 'https://www.transparentclassroom.com'
 
 
 # Max number of posts per page to expect from `posts.json`
@@ -31,59 +31,13 @@ POSTS_PER_PAGE = 30
 MAX_CONCURRENT_DOWNLOADS = 10
 
 
-# Response from `authenticate.json`
-class UserInfo(TypedDict):
-    id: int
-
-    school_id: int
-
-    first_name: str
-    last_name: str
-    email: str
-
-    api_token: str
-
-
-# One subject from `my_subjects.json`
-class Subject(TypedDict):
-    id: int
-
-    school_id: int
-    classroom_id: int
-
-    name: str
-    school_name: str
-
-    type: str  # e.g. "Child"
-
-
-# One post from `posts.json`
-class Post(TypedDict):
-    id: int
-    created_at: str  # e.g. "2022-04-01T11:22:37.000-07:00"
-
-    classroom_id: int
-
-    author: str
-    date: str  # e.g. "2022-04-01"
-
-    html: str
-    normalized_text: str
-
-    # these are missing for text-only posts
-    photo_url: str
-    medium_photo_url: str
-    large_photo_url: str
-    original_photo_url: str
-
-
 # TODO: sentinel ID or `created_at` for "stop looking"`
-def get_child_posts_once(s: requests.Session, school_id: int, child_id: int) -> List[Post]:
+def get_child_posts_once(s: requests.Session, school_id: int, child_id: int) -> List[TC.Post]:
     page = 1
-    posts: List[Post] = []
+    posts: List[TC.Post] = []
     while True:
         print(f'requesting child {child_id} page {page}')
-        r = s.get(f'{API_BASE}/s/{school_id}/children/{child_id}/posts.json?page={page}')
+        r = s.get(f'{TC.API_BASE}/s/{school_id}/children/{child_id}/posts.json?page={page}')
         r.raise_for_status()
 
         j = r.json()
@@ -100,7 +54,7 @@ def get_child_posts_once(s: requests.Session, school_id: int, child_id: int) -> 
     return posts
 
 
-def get_child_posts(s: requests.Session, school_id: int, child_id: int) -> List[Post]:
+def get_child_posts(s: requests.Session, school_id: int, child_id: int) -> List[TC.Post]:
     # Retrieve posts twice and check the lists match.
     #
     # todo: rewrite this long comment. Turns out, empirically, posts are sorted
@@ -115,64 +69,11 @@ def get_child_posts(s: requests.Session, school_id: int, child_id: int) -> List[
     return list1
 
 
-def authenticate(username: str, password: str) -> UserInfo:
-    s = requests.Session()
-    s.auth = (username, password)
-
-    r = s.get(f'{API_BASE}/api/v1/authenticate.json')
-    r.raise_for_status()
-
-    return r.json()
-
-
-def get_subjects(s: requests.Session, school_id: int) -> List[Subject]:
-    r = s.get(f'{API_BASE}/s/{school_id}/users/my_subjects.json')
-    r.raise_for_status()
-
-    return r.json()
-
-
 # TODO:
 #   - this could be a much better "archiver", right now it will *throw away* details on posts
 #     that have been deleted by the school. Need to union?
 #   - ideally might write updates to new files, in case old files are backed up
-def download_posts(username: str, password: str, target_path: pathlib.Path):
-    user_info = authenticate(username, password)
-
-    print(
-        f'Logged in as "{user_info["first_name"]} {user_info["last_name"]}" ({user_info["email"]})\n'
-        f'  User ID:   {user_info["id"]}\n'
-        f'  School ID: {user_info["school_id"]}'
-    )
-    print()
-
-    api_token = user_info['api_token']
-    school_id = int(user_info['school_id'])
-
-    # Create a session with the right authentication header for all future requests.
-    # As an added bonus, using a session gets us connection keep-alive.
-    s = requests.Session()
-    s.headers.update({'X-TransparentClassroomToken': api_token})
-
-    r = s.get(f'https://www.transparentclassroom.com/api/v1/children/99918.json')
-    r.raise_for_status()
-    print(json.dumps(r.json(), indent=2))
-    sys.exit(1)
-
-    subjects = get_subjects(s, school_id)
-
-    print(f'Found {len(subjects)} children')
-    for subj in subjects:
-        assert subj['type'] == 'Child', f'unexpected subject type: {subj["type"]}'
-        print(
-            f'- {subj["name"]}\n'
-            f'    Child ID:     {subj["id"]}\n'
-            f'    Classroom ID: {subj["classroom_id"]}'
-        )
-    print()
-
-    children_ids = [s['id'] for s in subjects]
-
+def download_posts(s: requests.Session, school_id: int, children_ids: List[int], target_path: pathlib.Path):
     for child_id in children_ids:
         child_path = target_path.joinpath(f'children/{child_id}')
         child_path.mkdir(parents=True, exist_ok=True)
@@ -203,7 +104,7 @@ def url_extension(url: str) -> str:
 #    (still some debate on where the add-extension code should go)
 # - may want a mode that double-checks photos already downloaded
 #   (with what? etag?)
-async def download_photos(posts: List[Post], target_path: pathlib.Path):
+async def download_photos(posts: List[TC.Post], target_path: pathlib.Path):
     target_path.mkdir(exist_ok=True)
     limiter = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
     tasks = []
@@ -242,14 +143,20 @@ async def download_photos(posts: List[Post], target_path: pathlib.Path):
 async def main(args):
     base_path = pathlib.Path('./TransparentClassroomArchive')
 
+    def create_tc():
+        username = os.getenv('TC_USERNAME')
+        password = os.getenv('TC_PASSWORD')
+        assert username and password, 'set TC_USERNAME and TC_PASSWORD'
+
+        return TC.TransparentClassroom(username, password)
+    tc = None
+
     if args.no_update_posts:
         print('Not retrieving posts')
     else:
-        username = os.getenv('TC_USERNAME')
-        password = os.getenv('TC_PASSWORD')
-        assert username and password, 'set username in TC_USERNAME, password in TC_PASSWORD'
+        tc = tc or create_tc()
+        download_posts(tc.session, tc.school_id(), tc.child_ids(), base_path)
 
-        download_posts(username, password, base_path)
 
     for posts_json in base_path.glob('children/*/posts.json'):
         with posts_json.open('r') as f:
