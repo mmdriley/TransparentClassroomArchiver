@@ -154,6 +154,11 @@ def download_posts(username: str, password: str, target_path: pathlib.Path):
     s = requests.Session()
     s.headers.update({'X-TransparentClassroomToken': api_token})
 
+    r = s.get(f'https://www.transparentclassroom.com/api/v1/children/99918.json')
+    r.raise_for_status()
+    print(json.dumps(r.json(), indent=2))
+    sys.exit(1)
+
     subjects = get_subjects(s, school_id)
 
     print(f'Found {len(subjects)} children')
@@ -242,8 +247,7 @@ async def main(args):
     else:
         username = os.getenv('TC_USERNAME')
         password = os.getenv('TC_PASSWORD')
-
-        assert password, 'password not found in TC_PASSWORD'
+        assert username and password, 'set username in TC_USERNAME, password in TC_PASSWORD'
 
         download_posts(username, password, base_path)
 
@@ -268,7 +272,7 @@ if __name__ == '__main__':
 # works, gets my info
 # r = s.get(f'https://www.transparentclassroom.com/s/87/users/my_self.json')
 
-# works, lists... all children?
+# works, appears to list all children in the school.
 # r = s.get(f'https://www.transparentclassroom.com/s/87/children.json')
 
 # works, gets posts per classroom
