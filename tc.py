@@ -140,6 +140,29 @@ async def download_photos(posts: List[TC.Post], target_path: pathlib.Path):
         await asyncio.gather(*tasks)
 
 
+def download_announcements(s: requests.Session, school_id: int, base_path: pathlib.Path):
+    announcements = []
+    params = {}
+
+    while True:
+        r = s.get(f'{TC.API_BASE}/s/{school_id}/frontend/announcements.json', params=params)
+        r.raise_for_status()
+
+        announcements += r.json()['data']
+
+        # When we run out of pages, the last response is:
+        # {"data":[],"pagination":{"next":null}}
+        next = r.json()['pagination']['next']
+        if next is None:
+            break
+        print(next)
+        params['page'] = next
+
+    with base_path.joinpath('announcements.json').open('w') as f:
+        json.dump(announcements, f)
+
+
+
 async def main(args):
     base_path = pathlib.Path('./TransparentClassroomArchive')
 
@@ -150,6 +173,11 @@ async def main(args):
 
         return TC.TransparentClassroom(username, password)
     tc = None
+
+    # Announcements!
+    tc = tc or create_tc()
+    download_announcements(tc.session, tc.school_id(), base_path)
+    sys.exit(1)
 
     if args.no_update_posts:
         print('Not retrieving posts')
