@@ -159,8 +159,42 @@ def download_announcements(s: requests.Session, school_id: int, base_path: pathl
         params['page'] = next
 
     with base_path.joinpath('announcements.json').open('w') as f:
-        json.dump(announcements, f)
+        json.dump(announcements, f, indent=2)
 
+
+def parse_announcements(announcements):
+    for a in announcements:
+        assert a['type'] == 'Announcement'
+
+        assert 'data' in a
+        d = a['data']
+
+        assert 'id' in d
+        assert 'createdAt' in d
+        assert 'title' in d
+        assert 'body' in d
+        assert 'attachments' in d
+
+        assert 'author' in d
+        assert 'id' in d['author']
+        assert 'name' in d['author']
+
+        assert 'subject' in d
+        assert 'id' in d['subject']
+        assert 'type' in d['subject']
+        assert 'name' in d['subject']
+        assert d['subject']['type'] in ['Classroom', 'School']
+
+        for att in d['attachments']:
+            assert att['type'] == 'Attachment'
+            assert 'data' in att
+            att_d = att['data']
+            assert 'name' in att_d
+            assert 'id' in att_d
+            assert 'url' in att_d
+            assert 'size' in att_d
+
+    print(f'{len(announcements)} announcements')
 
 
 async def main(args):
@@ -175,8 +209,12 @@ async def main(args):
     tc = None
 
     # Announcements!
-    tc = tc or create_tc()
-    download_announcements(tc.session, tc.school_id(), base_path)
+    # tc = tc or create_tc()
+    # download_announcements(tc.session, tc.school_id(), base_path)
+
+    with base_path.joinpath('announcements.json').open('r') as f:
+        announcements = json.load(f)
+        parse_announcements(announcements)
     sys.exit(1)
 
     if args.no_update_posts:
