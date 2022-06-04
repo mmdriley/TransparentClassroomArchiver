@@ -4,6 +4,7 @@ import aiohttp
 import argparse
 import asyncio
 import json
+import mimetypes
 import os
 import pathlib
 from typing import Dict, List, TypedDict
@@ -96,46 +97,63 @@ def url_extension(url: str) -> str:
     return ext
 
 
+def add_filename_url(to_download: Dict[str, str], id: str, url: str):
+    filename = f'{id}.{url_extension(url)}'
+    to_download[filename] = url
+
+
+async def download_post_photos(posts: List[TC.Post], target_path: pathlib.Path):
+    to_download = {}
+
+    for p in posts:
+        # skip text-only posts
+        if 'photo_url' not in p:
+            continue
+
+        id = p['id']
+        # TODO: is `id` unique enough here or should I include namespacing, e.g. photo{id}
+        # actually, will probably solve this by downloading into different *directories*
+        add_filename_url(to_download, f'{id}', p['photo_url'])
+        add_filename_url(to_download, f'{id}_original', p['original_photo_url'])
+    
+    await download_urls(to_download, target_path)
+
+
 # TODO:
-#  - set filetime with `Last-Modified` header
-#    (or at least store it somewhere? I probably don't actually want to care about preserving filesystem metadata)
-#  - any reason to care about mime type?
-#  - move Post parsing out of this, just take a Dict of url -> filename
-#    (still some debate on where the add-extension code should go)
 # - may want a mode that double-checks photos already downloaded
 #   (with what? etag?)
-async def download_photos(posts: List[TC.Post], target_path: pathlib.Path):
+
+# Downloads some URLs to `target_path`. Skips items already downloaded.
+#
+# `id_to_url` is a dict mapping "IDs" to URLs.
+async def download_urls(filename_to_url: Dict[str, str], target_path: pathlib.Path):
     target_path.mkdir(exist_ok=True)
     limiter = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
     tasks = []
 
     async with aiohttp.ClientSession() as session:
-        async def download_one(url: str, stem_path: pathlib.Path):
+        async def download_one(url: str, final_path: pathlib.Path):
             # Invariant: file exists at final path only if it was downloaded
             # successfully and completely.
-            final_path = stem_path.with_suffix('.' + url_extension(url))
-            if final_path.exists():
-                return
-
-            temp_path = stem_path.with_suffix('.unfinished')
+            assert final_path.suffix != '.unfinished'
+            temp_path = final_path.with_suffix('.unfinished')
             async with limiter, session.get(url) as response:
+                mimetype = response.headers.getone('content-type')
+                ext = url_extension(url)
+                assert f'.{ext}' in mimetypes.guess_all_extensions(mimetype), f"{url} shouldn't be {mimetype}"
+
                 response.raise_for_status()
                 with temp_path.open('wb') as f:
                     f.write(await response.read())
 
                 temp_path.rename(final_path)
-                print(final_path)
 
-        for p in posts:
-            # skip text-only posts
-            if 'photo_url' not in p:
+        for filename, url in filename_to_url.items():
+            final_path = target_path.joinpath(filename)
+            if final_path.exists():
                 continue
 
-            id = p['id']
-            tasks += map(asyncio.create_task, [
-                download_one(p['photo_url'], target_path.joinpath(f'{id}')),
-                download_one(p['original_photo_url'], target_path.joinpath(f'{id}_original')),
-            ])
+            tasks += [asyncio.create_task(download_one(url, final_path))]
     
         await asyncio.gather(*tasks)
 
@@ -212,10 +230,10 @@ async def main(args):
     # tc = tc or create_tc()
     # download_announcements(tc.session, tc.school_id(), base_path)
 
-    with base_path.joinpath('announcements.json').open('r') as f:
-        announcements = json.load(f)
-        parse_announcements(announcements)
-    sys.exit(1)
+    # with base_path.joinpath('announcements.json').open('r') as f:
+    #     announcements = json.load(f)
+    #     parse_announcements(announcements)
+    # sys.exit(1)
 
     if args.no_update_posts:
         print('Not retrieving posts')
@@ -227,7 +245,7 @@ async def main(args):
     for posts_json in base_path.glob('children/*/posts.json'):
         with posts_json.open('r') as f:
             posts = json.load(f)
-            await download_photos(posts, base_path.joinpath('photos'))
+            await download_post_photos(posts, base_path.joinpath('photos'))
 
 
 if __name__ == '__main__':
