@@ -3,6 +3,7 @@
 import aiohttp
 import argparse
 import asyncio
+from dataclasses import dataclass
 import json
 import mimetypes
 import os
@@ -30,6 +31,31 @@ POSTS_PER_PAGE = 30
 
 
 MAX_CONCURRENT_DOWNLOADS = 10
+
+
+def url_suffix(url: str) -> str:
+    parsed = urllib.parse.urlparse(url)
+    _, dot, ext = parsed.path.rpartition('.')
+    assert dot == '.', f'get extension from url failed: {url}'
+
+    suffix = dot + ext
+    assert suffix in ['.jpg', '.jpeg', '.png'], f'unexpected image extension: {suffix}'
+
+    return suffix
+
+
+@dataclass
+class DownloadItem:
+    filename: pathlib.Path
+    url: str
+
+    def __init__(self, filename: str, url: str, add_suffix = True):
+        self.url = url
+
+        self.filename = pathlib.Path(filename)
+        if add_suffix and not self.filename.suffix:
+            # add suffix from URL
+            self.filename = self.filename.with_suffix(url_suffix(url))
 
 
 # TODO: sentinel ID or `created_at` for "stop looking"`
@@ -88,22 +114,8 @@ def download_posts(s: requests.Session, school_id: int, children_ids: List[int],
             json.dump(ps, f, indent=2)
 
 
-def url_extension(url: str) -> str:
-    parsed = urllib.parse.urlparse(url)
-    _, dot, ext = parsed.path.rpartition('.')
-    assert dot == '.', f'get extension from url failed: {url}'
-    assert ext in ['jpg', 'jpeg', 'png'], f'unexpected image extension: {ext}'
-
-    return ext
-
-
-def add_filename_url(to_download: Dict[str, str], id: str, url: str):
-    filename = f'{id}.{url_extension(url)}'
-    to_download[filename] = url
-
-
 async def download_post_photos(posts: List[TC.Post], target_path: pathlib.Path):
-    to_download = {}
+    download_items = []
 
     for p in posts:
         # skip text-only posts
@@ -111,12 +123,16 @@ async def download_post_photos(posts: List[TC.Post], target_path: pathlib.Path):
             continue
 
         id = p['id']
+
         # TODO: is `id` unique enough here or should I include namespacing, e.g. photo{id}
         # actually, will probably solve this by downloading into different *directories*
-        add_filename_url(to_download, f'{id}', p['photo_url'])
-        add_filename_url(to_download, f'{id}_original', p['original_photo_url'])
+
+        download_items += [
+            DownloadItem(f'{id}', p['photo_url']),
+            DownloadItem(f'{id}_original', p['original_photo_url']),
+        ]
     
-    await download_urls(to_download, target_path)
+    await download_urls(download_items, target_path)
 
 
 # TODO:
@@ -124,9 +140,8 @@ async def download_post_photos(posts: List[TC.Post], target_path: pathlib.Path):
 #   (with what? etag?)
 
 # Downloads some URLs to `target_path`. Skips items already downloaded.
-#
-# `id_to_url` is a dict mapping "IDs" to URLs.
-async def download_urls(filename_to_url: Dict[str, str], target_path: pathlib.Path):
+# TODO: remove `target_path`, make it part of `items`.
+async def download_urls(items: List[DownloadItem], target_path: pathlib.Path):
     target_path.mkdir(exist_ok=True)
     limiter = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
     tasks = []
@@ -138,22 +153,21 @@ async def download_urls(filename_to_url: Dict[str, str], target_path: pathlib.Pa
             assert final_path.suffix != '.unfinished'
             temp_path = final_path.with_suffix('.unfinished')
             async with limiter, session.get(url) as response:
-                mimetype = response.headers.getone('content-type')
-                ext = url_extension(url)
-                assert f'.{ext}' in mimetypes.guess_all_extensions(mimetype), f"{url} shouldn't be {mimetype}"
-
                 response.raise_for_status()
+
+                mimetype = response.headers.getone('content-type')
+                assert final_path.suffix in mimetypes.guess_all_extensions(mimetype), f"{url} shouldn't be {mimetype}"
+
                 with temp_path.open('wb') as f:
                     f.write(await response.read())
-
                 temp_path.rename(final_path)
 
-        for filename, url in filename_to_url.items():
-            final_path = target_path.joinpath(filename)
+        for i in items:
+            final_path = target_path.joinpath(i.filename)
             if final_path.exists():
                 continue
 
-            tasks += [asyncio.create_task(download_one(url, final_path))]
+            tasks += [asyncio.create_task(download_one(i.url, final_path))]
     
         await asyncio.gather(*tasks)
 
