@@ -55,6 +55,10 @@ class Post(TypedDict):
 
 
 class TransparentClassroom:
+    user_info: UserInfo
+    session: requests.Session
+    subjects: List[Subject]
+
     def __init__(self, username: str, password: str):
         self.user_info = self._authenticate(username, password)
         self._print_user_info()
