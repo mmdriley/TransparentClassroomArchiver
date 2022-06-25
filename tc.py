@@ -280,3 +280,7 @@ if __name__ == '__main__':
 # r = s.get(f'{API_BASE}/s/87/children/99918/posts.json?ids[]=50562295&ids[]=25491909')
 # r.raise_for_status()
 # print(json.dumps(r.json(), indent=2))
+
+# https://www.transparentclassroom.com/s/87/posts.json
+# all posts for all accessible children
+# seems like it should take `child_id=NNN` but it has no effect
